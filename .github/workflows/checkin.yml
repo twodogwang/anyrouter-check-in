@@ -88,33 +88,13 @@ jobs:
         PROXY_REQUIRED: false
       run: bash scripts/setup_mihomo_proxy.sh
 
-    - name: 仅保留第一个账号
-      env:
-        RAW_ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
-      run: |
-        python - <<'PY'
-        import json
-        import os
-
-        accounts = json.loads(os.environ['RAW_ANYROUTER_ACCOUNTS'])
-        if not isinstance(accounts, list) or not accounts:
-            raise SystemExit('ANYROUTER_ACCOUNTS must be a non-empty JSON array')
-
-        first_account = json.dumps([accounts[0]], ensure_ascii=False, separators=(',', ':'))
-        print(f'::add-mask::{first_account}')
-
-        with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
-            f.write(f'ANYROUTER_ACCOUNTS={first_account}\n')
-
-        print('Using first account only')
-        PY
-
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
         CHECKIN_HEADLESS: false
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000
+        ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
         PROVIDERS: ${{ secrets.PROVIDERS }}
         DINGDING_WEBHOOK: ${{ secrets.DINGDING_WEBHOOK }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
