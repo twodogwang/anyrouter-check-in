@@ -101,6 +101,8 @@ jobs:
             raise SystemExit('ANYROUTER_ACCOUNTS must be a non-empty JSON array')
 
         first_account = json.dumps([accounts[0]], ensure_ascii=False, separators=(',', ':'))
+        print(f'::add-mask::{first_account}')
+
         with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
             f.write(f'ANYROUTER_ACCOUNTS={first_account}\n')
 
