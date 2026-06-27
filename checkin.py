@@ -317,6 +317,16 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 
 def format_check_in_notification(detail: dict) -> str:
 	"""格式化签到通知消息"""
+	if detail.get('auto_check_in'):
+		lines = [
+			f'[CHECK-IN] {detail["name"]}',
+			'  ━━━━━━━━━━━━━━━━━━━━',
+			f'  当前余额: ${detail["after_quota"]:.2f}',
+			f'  累计消耗: ${detail["after_used"]:.2f}',
+			'  查询用户信息时自动触发签到',
+		]
+		return '\n'.join(lines)
+
 	lines = [
 		f'[CHECK-IN] {detail["name"]}',
 		'  ━━━━━━━━━━━━━━━━━━━━',
@@ -348,6 +358,20 @@ def format_check_in_notification(detail: dict) -> str:
 		lines.extend(['  ━━━━━━━━━━━━━━━━━━━━', '  今日已签到，无变化'])
 
 	return '\n'.join(lines)
+
+
+def append_account_notification(
+	notification_content: list[str],
+	notified_account_keys: set[str],
+	account_key: str,
+	account_result: str,
+) -> None:
+	"""按账号 key 精确去重，避免账号名子串误判。"""
+	if account_key in notified_account_keys:
+		return
+
+	notification_content.append(account_result)
+	notified_account_keys.add(account_key)
 
 
 async def check_in_account(account: AccountConfig, account_index: int, app_config: AppConfig):
@@ -508,6 +532,7 @@ async def main():
 	success_count = 0
 	total_count = len(accounts)
 	notification_content = []
+	notified_account_keys = set()
 	current_balances = {}
 	account_check_in_details = {}
 	need_notify = False
@@ -538,6 +563,7 @@ async def main():
 					before_used = user_info_before['used_quota']
 					after_quota = user_info_after['quota']
 					after_used = user_info_after['used_quota']
+					provider_config = app_config.get_provider(account.provider)
 
 					total_before = before_quota + before_used
 					total_after = after_quota + after_used
@@ -555,6 +581,7 @@ async def main():
 						'check_in_reward': check_in_reward,
 						'usage_increase': usage_increase,
 						'balance_change': balance_change,
+						'auto_check_in': bool(provider_config and not provider_config.needs_manual_check_in()),
 						'success': success,
 					}
 
@@ -566,13 +593,18 @@ async def main():
 					account_result += f'\n{user_info_after["display"]}'
 				elif user_info_after:
 					account_result += f'\n{user_info_after.get("error", "Unknown error")}'
-				notification_content.append(account_result)
+				append_account_notification(notification_content, notified_account_keys, account_key, account_result)
 
 		except Exception as e:
 			account_name = account.get_display_name(i)
 			print(f'[FAILED] {account_name} processing exception: {e}')
 			need_notify = True
-			notification_content.append(f'[FAIL] {account_name} exception: {str(e)[:50]}...')
+			append_account_notification(
+				notification_content,
+				notified_account_keys,
+				account_key,
+				f'[FAIL] {account_name} exception: {str(e)[:50]}...',
+			)
 
 	current_balance_hash = generate_balance_hash(current_balances) if current_balances else None
 	if current_balance_hash:
@@ -592,10 +624,8 @@ async def main():
 			account_key = f'account_{i + 1}'
 			if account_key in account_check_in_details:
 				detail = account_check_in_details[account_key]
-				account_name = detail['name']
 				account_result = format_check_in_notification(detail)
-				if not any(account_name in item for item in notification_content):
-					notification_content.append(account_result)
+				append_account_notification(notification_content, notified_account_keys, account_key, account_result)
 
 	if current_balance_hash:
 		save_balance_hash(current_balance_hash)
