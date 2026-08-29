@@ -38,7 +38,6 @@ MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
 cat > config.yaml <<EOF
 mixed-port: ${PROXY_PORT}
-external-controller: 127.0.0.1:9090
 allow-lan: false
 ipv6: false
 mode: rule
