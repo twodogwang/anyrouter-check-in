@@ -20,6 +20,12 @@ PROXY_TEST_URL="${PROXY_TEST_URL:-https://www.google.com/generate_204}"
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
 PROXY_NODE_NAME="${PROXY_NODE_NAME:-}"
+HEALTH_TIMEOUT=20
+HEALTH_ATTEMPTS=45
+if [[ -n "${PROXY_NODE_NAME}" ]]; then
+	HEALTH_TIMEOUT=8
+	HEALTH_ATTEMPTS=12
+fi
 
 mkdir -p "${PROXY_DIR}"
 cd "${PROXY_DIR}"
@@ -114,12 +120,12 @@ echo $! > mihomo.pid
 
 PROXY_URL="http://127.0.0.1:${PROXY_PORT}"
 READY=false
-for attempt in $(seq 1 45); do
-	if curl -fsS -x "${PROXY_URL}" --max-time 20 "${PROXY_TEST_URL}" -o /dev/null 2>/dev/null; then
+for attempt in $(seq 1 "${HEALTH_ATTEMPTS}"); do
+	if curl -fsS -x "${PROXY_URL}" --max-time "${HEALTH_TIMEOUT}" "${PROXY_TEST_URL}" -o /dev/null 2>/dev/null; then
 		READY=true
 		break
 	fi
-	echo "[INFO] Waiting for proxy health check (${attempt}/45)..."
+	echo "[INFO] Waiting for proxy health check (${attempt}/${HEALTH_ATTEMPTS})..."
 	sleep 2
 done
 
