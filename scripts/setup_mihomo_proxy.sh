@@ -57,7 +57,11 @@ proxy-providers:
 
 proxy-groups:
   - name: CHECKIN
-    type: select
+    type: url-test
+    url: "${PROXY_TEST_URL}"
+    interval: 300
+    tolerance: 150
+    lazy: false
     use:
       - subscription
 
