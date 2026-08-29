@@ -20,6 +20,7 @@ PROXY_TEST_URL="${PROXY_TEST_URL:-https://www.google.com/generate_204}"
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
 PROXY_NODE_NAME="${PROXY_NODE_NAME:-}"
+export PROXY_NODE_NAME
 HEALTH_TIMEOUT=20
 HEALTH_ATTEMPTS=45
 if [[ -n "${PROXY_NODE_NAME}" ]]; then
@@ -44,6 +45,10 @@ if ! ruby -ryaml -e '
   source = YAML.safe_load(File.read("source-subscription.yaml"), aliases: true)
   proxies = source.is_a?(Hash) ? source["proxies"] : nil
   abort "subscription has no proxies list" unless proxies.is_a?(Array) && !proxies.empty?
+  if (wanted = ENV["PROXY_NODE_NAME"]) && !wanted.empty?
+    proxies = proxies.select { |proxy| proxy.is_a?(Hash) && proxy["name"] == wanted }
+    abort "requested proxy node was not found" if proxies.empty?
+  end
   File.write("subscription.yaml", {"proxies" => proxies}.to_yaml)
 '; then
 	echo "[FAILED] Subscription is not a compatible Clash/Mihomo YAML response"
@@ -85,18 +90,6 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
 
 proxy-groups:
-EOF
-
-if [[ -n "${PROXY_NODE_NAME}" ]]; then
-cat >> config.yaml <<EOF
-  - name: CHECKIN
-    type: select
-    default-selected: "${PROXY_NODE_NAME}"
-    use:
-      - subscription
-EOF
-else
-cat >> config.yaml <<EOF
   - name: CHECKIN
     type: url-test
     url: "${PROXY_TEST_URL}"
@@ -106,7 +99,6 @@ cat >> config.yaml <<EOF
     use:
       - subscription
 EOF
-fi
 
 cat >> config.yaml <<EOF
 
