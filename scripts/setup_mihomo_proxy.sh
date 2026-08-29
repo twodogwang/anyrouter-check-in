@@ -5,7 +5,7 @@
 #   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
 #   PROXY_REQUIRED          true 时探测失败则退出 1
 #   PROXY_PORT              本地 mixed-port，默认 7890
-#   PROXY_NODE_FILTER       固定节点名称过滤器，默认 日本A04
+#   PROXY_NODE_NAME         固定节点名称
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ PROXY_PORT="${PROXY_PORT:-7890}"
 PROXY_TEST_URL="${PROXY_TEST_URL:-https://www.google.com/generate_204}"
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
-PROXY_NODE_FILTER="${PROXY_NODE_FILTER:-日本A04}"
+PROXY_NODE_NAME="${PROXY_NODE_NAME:-🇯🇵 日本A04 | IEPL}"
 
 mkdir -p "${PROXY_DIR}"
 cd "${PROXY_DIR}"
@@ -60,7 +60,7 @@ proxy-providers:
 proxy-groups:
   - name: CHECKIN
     type: select
-    filter: "${PROXY_NODE_FILTER}"
+    default-selected: "${PROXY_NODE_NAME}"
     use:
       - subscription
 
