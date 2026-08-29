@@ -36,10 +36,6 @@ jobs:
           grep -Eai 'Access Verification|Please slide|sign.?in|password|login' \
             /tmp/agentrouter-login.html | head -n 10 || true
 
-      - name: Report selected proxy node
-        run: |
-          echo '=== MIHOMO_SELECTED_NODE ==='
-          curl -fsS --max-time 10 http://127.0.0.1:9090/proxies/CHECKIN | jq -r '.now // "unknown"'
 
       - name: Stop mihomo
         if: always()
