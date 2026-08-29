@@ -22,6 +22,29 @@ PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
 mkdir -p "${PROXY_DIR}"
 cd "${PROXY_DIR}"
 
+echo "[INFO] Downloading subscription..."
+if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL -o source-subscription.yaml "${PROXY_SUBSCRIPTION_URL}"; then
+	echo "[FAILED] Failed to download subscription"
+	if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+		exit 1
+	fi
+	exit 0
+fi
+
+# Convert either a full Clash config or a provider response into a provider-only file.
+if ! ruby -ryaml -e '
+  source = YAML.safe_load(File.read("source-subscription.yaml"), aliases: true)
+  proxies = source.is_a?(Hash) ? source["proxies"] : nil
+  abort "subscription has no proxies list" unless proxies.is_a?(Array) && !proxies.empty?
+  File.write("subscription.yaml", {"proxies" => proxies}.to_yaml)
+'; then
+	echo "[FAILED] Subscription is not a compatible Clash/Mihomo YAML response"
+	if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+		exit 1
+	fi
+	exit 0
+fi
+
 echo "[INFO] Downloading mihomo ${MIHOMO_VERSION}..."
 ARCHIVE="mihomo-linux-amd64-${MIHOMO_VERSION}.gz"
 if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL -o "${ARCHIVE}" \
@@ -46,9 +69,7 @@ unified-delay: true
 
 proxy-providers:
   subscription:
-    type: http
-    url: "${PROXY_SUBSCRIPTION_URL}"
-    interval: 3600
+    type: file
     path: ./subscription.yaml
     health-check:
       enable: true
