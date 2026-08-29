@@ -5,6 +5,7 @@
 #   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
 #   PROXY_REQUIRED          true 时探测失败则退出 1
 #   PROXY_PORT              本地 mixed-port，默认 7890
+#   PROXY_NODE_NAME         可选，固定选择的节点名称；为空时自动测速
 
 set -euo pipefail
 
@@ -18,6 +19,7 @@ PROXY_PORT="${PROXY_PORT:-7890}"
 PROXY_TEST_URL="${PROXY_TEST_URL:-https://www.google.com/generate_204}"
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
+PROXY_NODE_NAME="${PROXY_NODE_NAME:-}"
 
 mkdir -p "${PROXY_DIR}"
 cd "${PROXY_DIR}"
@@ -77,6 +79,18 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
 
 proxy-groups:
+EOF
+
+if [[ -n "${PROXY_NODE_NAME}" ]]; then
+cat >> config.yaml <<EOF
+  - name: CHECKIN
+    type: select
+    default-selected: "${PROXY_NODE_NAME}"
+    use:
+      - subscription
+EOF
+else
+cat >> config.yaml <<EOF
   - name: CHECKIN
     type: url-test
     url: "${PROXY_TEST_URL}"
@@ -85,6 +99,10 @@ proxy-groups:
     lazy: false
     use:
       - subscription
+EOF
+fi
+
+cat >> config.yaml <<EOF
 
 rules:
   - MATCH,CHECKIN
