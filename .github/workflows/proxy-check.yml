@@ -17,6 +17,7 @@ jobs:
 
       - name: Install mihomo
         env:
+          PROXY_NODE_URI: ${{ secrets.PROXY_NODE_URI }}
           PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
           PROXY_TEST_URL: https://www.google.com/generate_204
           MIHOMO_VERSION: v1.19.27
