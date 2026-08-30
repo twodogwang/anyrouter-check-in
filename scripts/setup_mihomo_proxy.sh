@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 通过 mihomo 拉取订阅、启动本地代理并探测可用节点。
 # 环境变量:
+#   PROXY_NODE_URI          单节点 trojan:// 或 vless:// 链接（优先使用）
 #   PROXY_SUBSCRIPTION_URL  订阅链接（必填才启用）
 #   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
 #   PROXY_REQUIRED          true 时探测失败则退出 1
@@ -9,8 +10,8 @@
 
 set -euo pipefail
 
-if [[ -z "${PROXY_SUBSCRIPTION_URL:-}" ]]; then
-	echo "[INFO] PROXY_SUBSCRIPTION_URL not set, skip proxy setup"
+if [[ -z "${PROXY_NODE_URI:-}" && -z "${PROXY_SUBSCRIPTION_URL:-}" ]]; then
+	echo "[INFO] PROXY_NODE_URI and PROXY_SUBSCRIPTION_URL not set, skip proxy setup"
 	exit 0
 fi
 
@@ -31,31 +32,87 @@ fi
 mkdir -p "${PROXY_DIR}"
 cd "${PROXY_DIR}"
 
-echo "[INFO] Downloading subscription..."
-if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL -o source-subscription.yaml "${PROXY_SUBSCRIPTION_URL}"; then
-	echo "[FAILED] Failed to download subscription"
-	if [[ "${PROXY_REQUIRED}" == "true" ]]; then
-		exit 1
-	fi
-	exit 0
-fi
+if [[ -n "${PROXY_NODE_URI:-}" ]]; then
+	echo "[INFO] Converting single proxy URI..."
+	if ! ruby -ryaml -ruri -e '
+    raw = ENV.fetch("PROXY_NODE_URI")
+    uri = URI.parse(raw)
+    abort "only trojan:// and vless:// are supported" unless %w[trojan vless].include?(uri.scheme)
+    abort "proxy URI is missing host or port" unless uri.host && uri.port
 
-# Convert either a full Clash config or a provider response into a provider-only file.
-if ! ruby -ryaml -e '
-  source = YAML.safe_load(File.read("source-subscription.yaml"), aliases: true)
-  proxies = source.is_a?(Hash) ? source["proxies"] : nil
-  abort "subscription has no proxies list" unless proxies.is_a?(Array) && !proxies.empty?
-  if (wanted = ENV["PROXY_NODE_NAME"]) && !wanted.empty?
-    proxies = proxies.select { |proxy| proxy.is_a?(Hash) && proxy["name"] == wanted }
-    abort "requested proxy node was not found" if proxies.empty?
-  end
-  File.write("subscription.yaml", {"proxies" => proxies}.to_yaml)
-'; then
-	echo "[FAILED] Subscription is not a compatible Clash/Mihomo YAML response"
-	if [[ "${PROXY_REQUIRED}" == "true" ]]; then
-		exit 1
+    params = URI.decode_www_form(uri.query.to_s).to_h
+    decode = ->(value) { URI.decode_www_form_component(value.to_s) }
+    truthy = ->(value) { %w[1 true yes].include?(value.to_s.downcase) }
+    network = params.fetch("type", "tcp")
+    security = params.fetch("security", uri.scheme == "trojan" ? "tls" : "none")
+    credential = decode.call(uri.userinfo)
+    abort "proxy URI is missing credentials" if credential.empty?
+
+    proxy = {
+      "name" => decode.call(uri.fragment || "#{uri.scheme}-node"),
+      "type" => uri.scheme,
+      "server" => uri.host,
+      "port" => uri.port,
+      uri.scheme == "vless" ? "uuid" : "password" => credential,
+      "udp" => true
+    }
+    proxy["network"] = network unless network == "tcp"
+    proxy["tls"] = true if %w[tls reality].include?(security)
+    proxy["servername"] = params["sni"] if params["sni"] && !params["sni"].empty?
+    proxy["skip-cert-verify"] = truthy.call(params["allowInsecure"] || params["insecure"])
+    proxy["client-fingerprint"] = params["fp"] if params["fp"] && !params["fp"].empty?
+    proxy["flow"] = params["flow"] if params["flow"] && !params["flow"].empty?
+    proxy["alpn"] = params["alpn"].split(",") if params["alpn"] && !params["alpn"].empty?
+
+    if security == "reality"
+      proxy["reality-opts"] = {
+        "public-key" => params["pbk"],
+        "short-id" => params["sid"].to_s
+      }
+    end
+    if network == "ws"
+      proxy["ws-opts"] = {"path" => decode.call(params.fetch("path", "/"))}
+      proxy["ws-opts"]["headers"] = {"Host" => params["host"]} if params["host"] && !params["host"].empty?
+    elsif network == "grpc"
+      service = params["serviceName"] || params["service-name"]
+      proxy["grpc-opts"] = {"grpc-service-name" => service} if service && !service.empty?
+    end
+
+    File.write("subscription.yaml", {"proxies" => [proxy]}.to_yaml)
+  '; then
+		echo "[FAILED] PROXY_NODE_URI is not a compatible trojan:// or vless:// link"
+		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+			exit 1
+		fi
+		exit 0
 	fi
-	exit 0
+else
+	echo "[INFO] Downloading subscription..."
+	if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL -o source-subscription.yaml "${PROXY_SUBSCRIPTION_URL}"; then
+		echo "[FAILED] Failed to download subscription"
+		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+			exit 1
+		fi
+		exit 0
+	fi
+
+	# Convert either a full Clash config or a provider response into a provider-only file.
+	if ! ruby -ryaml -e '
+    source = YAML.safe_load(File.read("source-subscription.yaml"), aliases: true)
+    proxies = source.is_a?(Hash) ? source["proxies"] : nil
+    abort "subscription has no proxies list" unless proxies.is_a?(Array) && !proxies.empty?
+    if (wanted = ENV["PROXY_NODE_NAME"]) && !wanted.empty?
+      proxies = proxies.select { |proxy| proxy.is_a?(Hash) && proxy["name"] == wanted }
+      abort "requested proxy node was not found" if proxies.empty?
+    end
+    File.write("subscription.yaml", {"proxies" => proxies}.to_yaml)
+  '; then
+		echo "[FAILED] Subscription is not a compatible Clash/Mihomo YAML response"
+		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+			exit 1
+		fi
+		exit 0
+	fi
 fi
 
 echo "[INFO] Downloading mihomo ${MIHOMO_VERSION}..."
