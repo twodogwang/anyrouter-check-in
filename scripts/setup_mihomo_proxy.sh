@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 通过 mihomo 拉取订阅、启动本地代理并探测可用节点。
 # 环境变量:
-#   PROXY_NODE_URI          单节点 trojan:// 或 vless:// 链接（优先使用）
+#   PROXY_NODE_URI          单节点 trojan://、vless:// 或 ss:// 链接（优先使用）
 #   PROXY_SUBSCRIPTION_URL  订阅链接（必填才启用）
 #   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
 #   PROXY_REQUIRED          true 时探测失败则退出 1
@@ -34,53 +34,80 @@ cd "${PROXY_DIR}"
 
 if [[ -n "${PROXY_NODE_URI:-}" ]]; then
 	echo "[INFO] Converting single proxy URI..."
-	if ! ruby -ryaml -ruri -e '
-    raw = ENV.fetch("PROXY_NODE_URI")
+	if ! ruby -ryaml -ruri -rbase64 -e '
+    raw = ENV.fetch("PROXY_NODE_URI").strip
     uri = URI.parse(raw)
-    abort "only trojan:// and vless:// are supported" unless %w[trojan vless].include?(uri.scheme)
-    abort "proxy URI is missing host or port" unless uri.host && uri.port
-
+    scheme = uri.scheme.to_s.downcase
     params = URI.decode_www_form(uri.query.to_s).to_h
     decode = ->(value) { URI.decode_www_form_component(value.to_s) }
     truthy = ->(value) { %w[1 true yes].include?(value.to_s.downcase) }
-    network = params.fetch("type", "tcp")
-    security = params.fetch("security", uri.scheme == "trojan" ? "tls" : "none")
-    credential = decode.call(uri.userinfo)
-    abort "proxy URI is missing credentials" if credential.empty?
 
-    proxy = {
-      "name" => decode.call(uri.fragment || "#{uri.scheme}-node"),
-      "type" => uri.scheme,
-      "server" => uri.host,
-      "port" => uri.port,
-      uri.scheme == "vless" ? "uuid" : "password" => credential,
-      "udp" => true
-    }
-    proxy["network"] = network unless network == "tcp"
-    proxy["tls"] = true if %w[tls reality].include?(security)
-    proxy["servername"] = params["sni"] if params["sni"] && !params["sni"].empty?
-    proxy["skip-cert-verify"] = truthy.call(params["allowInsecure"] || params["insecure"])
-    proxy["client-fingerprint"] = params["fp"] if params["fp"] && !params["fp"].empty?
-    proxy["flow"] = params["flow"] if params["flow"] && !params["flow"].empty?
-    proxy["alpn"] = params["alpn"].split(",") if params["alpn"] && !params["alpn"].empty?
-
-    if security == "reality"
-      proxy["reality-opts"] = {
-        "public-key" => params["pbk"],
-        "short-id" => params["sid"].to_s
+    if scheme == "ss"
+      # Support SIP002 (base64(method:password)@host:port) and legacy full-base64 links.
+      decode64 = ->(value) {
+        encoded = value.to_s.gsub(/\s+/, "")
+        encoded += "=" * ((4 - encoded.length % 4) % 4)
+        Base64.urlsafe_decode64(encoded)
       }
-    end
-    if network == "ws"
-      proxy["ws-opts"] = {"path" => decode.call(params.fetch("path", "/"))}
-      proxy["ws-opts"]["headers"] = {"Host" => params["host"]} if params["host"] && !params["host"].empty?
-    elsif network == "grpc"
-      service = params["serviceName"] || params["service-name"]
-      proxy["grpc-opts"] = {"grpc-service-name" => service} if service && !service.empty?
+      cipher = password = host = port = nil
+      if uri.userinfo && uri.host && uri.port
+        credentials = decode64.call(decode.call(uri.userinfo))
+        cipher, password = credentials.split(":", 2)
+        host, port = uri.host, uri.port
+      elsif uri.host && !uri.port
+        decoded = decode64.call(uri.host)
+        match = decoded.match(/\A([^:]+):(.+)@([^:]+):(\d+)\z/)
+        abort "invalid legacy ss:// link" unless match
+        cipher, password, host, port = match.captures
+        port = port.to_i
+      end
+      abort "invalid ss:// link" unless cipher && password && host && port
+      proxy = {"name" => decode.call(uri.fragment || "ss-node"), "type" => "ss", "server" => host, "port" => port, "cipher" => cipher, "password" => password, "udp" => true}
+      if params["plugin"] && !params["plugin"].empty?
+        plugin_parts = decode.call(params["plugin"]).split(";")
+        proxy["plugin"] = plugin_parts.shift.sub(/-local\z/, "")
+		opts = plugin_parts.each_with_object({}) { |part, result| key, value = part.split("=", 2); result[key] = value || true if key && !key.empty? }
+        proxy["plugin-opts"] = opts unless opts.empty?
+      end
+    else
+      abort "only trojan://, vless:// and ss:// are supported" unless %w[trojan vless].include?(scheme)
+      abort "proxy URI is missing host or port" unless uri.host && uri.port
+      network = params.fetch("type", "tcp")
+      security = params.fetch("security", scheme == "trojan" ? "tls" : "none")
+      credential = decode.call(uri.userinfo)
+      abort "proxy URI is missing credentials" if credential.empty?
+
+      proxy = {
+        "name" => decode.call(uri.fragment || "#{scheme}-node"),
+        "type" => scheme,
+        "server" => uri.host,
+        "port" => uri.port,
+        scheme == "vless" ? "uuid" : "password" => credential,
+        "udp" => true
+      }
+      proxy["network"] = network unless network == "tcp"
+      proxy["tls"] = true if %w[tls reality].include?(security)
+      proxy["servername"] = params["sni"] if params["sni"] && !params["sni"].empty?
+      proxy["skip-cert-verify"] = truthy.call(params["allowInsecure"] || params["insecure"])
+      proxy["client-fingerprint"] = params["fp"] if params["fp"] && !params["fp"].empty?
+      proxy["flow"] = params["flow"] if params["flow"] && !params["flow"].empty?
+      proxy["alpn"] = params["alpn"].split(",") if params["alpn"] && !params["alpn"].empty?
+
+      if security == "reality"
+        proxy["reality-opts"] = {"public-key" => params["pbk"], "short-id" => params["sid"].to_s}
+      end
+      if network == "ws"
+        proxy["ws-opts"] = {"path" => decode.call(params.fetch("path", "/"))}
+        proxy["ws-opts"]["headers"] = {"Host" => params["host"]} if params["host"] && !params["host"].empty?
+      elsif network == "grpc"
+        service = params["serviceName"] || params["service-name"]
+        proxy["grpc-opts"] = {"grpc-service-name" => service} if service && !service.empty?
+      end
     end
 
     File.write("subscription.yaml", {"proxies" => [proxy]}.to_yaml)
   '; then
-		echo "[FAILED] PROXY_NODE_URI is not a compatible trojan:// or vless:// link"
+		echo "[FAILED] PROXY_NODE_URI is not a compatible trojan://, vless:// or ss:// link"
 		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
 			exit 1
 		fi
