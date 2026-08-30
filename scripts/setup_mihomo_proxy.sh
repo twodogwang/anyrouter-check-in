@@ -24,7 +24,7 @@ PROXY_NODE_NAME="${PROXY_NODE_NAME:-}"
 export PROXY_NODE_NAME
 HEALTH_TIMEOUT=20
 HEALTH_ATTEMPTS=45
-if [[ -n "${PROXY_NODE_NAME}" ]]; then
+if [[ -n "${PROXY_NODE_URI:-}" || -n "${PROXY_NODE_NAME}" ]]; then
 	HEALTH_TIMEOUT=8
 	HEALTH_ATTEMPTS=12
 fi
@@ -170,6 +170,11 @@ echo $! > mihomo.pid
 PROXY_URL="http://127.0.0.1:${PROXY_PORT}"
 READY=false
 for attempt in $(seq 1 "${HEALTH_ATTEMPTS}"); do
+	if ! kill -0 "$(cat mihomo.pid)" 2>/dev/null; then
+		echo "[FAILED] Mihomo exited before the proxy became ready"
+		tail -n 30 mihomo.log || true
+		break
+	fi
 	if curl -fsS -x "${PROXY_URL}" --max-time "${HEALTH_TIMEOUT}" "${PROXY_TEST_URL}" -o /dev/null 2>/dev/null; then
 		READY=true
 		break
@@ -180,6 +185,7 @@ done
 
 if [[ "${READY}" != "true" ]]; then
 	echo "[FAILED] Proxy health check failed for ${PROXY_TEST_URL}"
+	curl -sS -x "${PROXY_URL}" --max-time 10 "${PROXY_TEST_URL}" -o /dev/null || true
 	tail -n 30 mihomo.log || true
 	if [[ -f mihomo.pid ]]; then
 		kill "$(cat mihomo.pid)" 2>/dev/null || true
