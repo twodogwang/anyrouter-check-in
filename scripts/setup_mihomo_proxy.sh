@@ -22,6 +22,15 @@ MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 PROXY_REQUIRED="${PROXY_REQUIRED:-false}"
 PROXY_NODE_NAME="${PROXY_NODE_NAME:-}"
 export PROXY_NODE_NAME
+PROXY_PROVIDER_FILTER=""
+if [[ -z "${PROXY_NODE_URI:-}" && -n "${PROXY_NODE_NAME}" ]]; then
+	PROXY_PROVIDER_FILTER="$(ruby -ryaml -e '
+    wanted = ENV.fetch("PROXY_NODE_NAME")
+    escaped = wanted.gsub(/[\\.\+\*\?\(\)\|\[\]\{\}\^\$]/) { |character| "\\#{character}" }
+    scalar = "^#{escaped}$".to_yaml.sub(/\A---\s*/, "").strip
+    print "    filter: #{scalar}"
+  ')"
+fi
 HEALTH_TIMEOUT=20
 HEALTH_ATTEMPTS=45
 if [[ -n "${PROXY_NODE_URI:-}" || -n "${PROXY_NODE_NAME}" ]]; then
@@ -115,30 +124,24 @@ if [[ -n "${PROXY_NODE_URI:-}" ]]; then
 	fi
 else
 	echo "[INFO] Downloading subscription..."
-	if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSL -o source-subscription.yaml "${PROXY_SUBSCRIPTION_URL}"; then
+	if ! curl -A "clash.meta" --retry 3 --retry-delay 5 --retry-all-errors \
+		-fsSL -o subscription.yaml "${PROXY_SUBSCRIPTION_URL}"; then
 		echo "[FAILED] Failed to download subscription"
 		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
 			exit 1
 		fi
 		exit 0
 	fi
-
-	# Convert either a full Clash config or a provider response into a provider-only file.
-	if ! ruby -ryaml -e '
-    source = YAML.safe_load(File.read("source-subscription.yaml"), aliases: true)
-    proxies = source.is_a?(Hash) ? source["proxies"] : nil
-    abort "subscription has no proxies list" unless proxies.is_a?(Array) && !proxies.empty?
-    if (wanted = ENV["PROXY_NODE_NAME"]) && !wanted.empty?
-      proxies = proxies.select { |proxy| proxy.is_a?(Hash) && proxy["name"] == wanted }
-      abort "requested proxy node was not found" if proxies.empty?
-    end
-    File.write("subscription.yaml", {"proxies" => proxies}.to_yaml)
-  '; then
-		echo "[FAILED] Subscription is not a compatible Clash/Mihomo YAML response"
+	if [[ ! -s subscription.yaml ]]; then
+		echo "[FAILED] Subscription response is empty"
 		if [[ "${PROXY_REQUIRED}" == "true" ]]; then
 			exit 1
 		fi
 		exit 0
+	fi
+	echo "[INFO] Subscription downloaded; Mihomo will parse YAML, URI, or Base64 content"
+	if [[ -n "${PROXY_NODE_NAME}" ]]; then
+		echo "[INFO] Restricting subscription to exact node: ${PROXY_NODE_NAME}"
 	fi
 fi
 
@@ -168,6 +171,7 @@ proxy-providers:
   subscription:
     type: file
     path: ./subscription.yaml
+${PROXY_PROVIDER_FILTER}
     health-check:
       enable: true
       interval: 300
@@ -189,6 +193,16 @@ cat >> config.yaml <<EOF
 rules:
   - MATCH,CHECKIN
 EOF
+
+echo "[INFO] Validating mihomo configuration..."
+if ! "${MIHOMO_BIN}" -t -d "${PROXY_DIR}" -f config.yaml > mihomo-validate.log 2>&1; then
+	echo "[FAILED] Mihomo could not parse the subscription or the selected node was not found"
+	tail -n 30 mihomo-validate.log || true
+	if [[ "${PROXY_REQUIRED}" == "true" ]]; then
+		exit 1
+	fi
+	exit 0
+fi
 
 echo "[INFO] Starting mihomo on 127.0.0.1:${PROXY_PORT}..."
 nohup "${MIHOMO_BIN}" -d "${PROXY_DIR}" -f config.yaml > mihomo.log 2>&1 &

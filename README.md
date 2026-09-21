@@ -276,7 +276,8 @@
 
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
-- `PROXY_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+- `PROXY_SUBSCRIPTION_URL`：代理订阅链接，支持 Mihomo 原生的 YAML、URI 和 Base64 provider 内容。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+- `PROXY_NODE_NAME`：可选，填写订阅中的完整节点名称以固定节点；不设置时使用 `url-test` 自动选择。
 
 本地运行时也可以直接使用已有代理：
 
